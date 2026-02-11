@@ -1,172 +1,360 @@
-import { useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 
-const stepVariants = {
-  hidden: { opacity: 0, x: 50 },
-  visible: { opacity: 1, x: 0 },
-  exit: { opacity: 0, x: -50 },
+const LS_KEY = "join-us-form-v1";
+
+const initial = {
+  firstName: "",
+  lastName: "",
+  username: "",
+  email: "",
+  phone: "",
+  password: "",
+  confirmPassword: "",
+  dob: "",
+  profileImageUrl: "",
 };
 
+const pad2 = (n) => String(n).padStart(2, "0");
+const daysInMonth = (y, m) => new Date(y, m, 0).getDate(); // m = 1..12
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
-const onlyDigits = (v) => String(v || "").replace(/\D/g, "");
-const getAge = (dateStr) => {
+const onlyDigits = (v) => String(v ?? "").replace(/\D/g, "");
+
+const yearsDiff = (dateStr) => {
   if (!dateStr) return 0;
   const today = new Date();
   const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return 0;
   let age = today.getFullYear() - d.getFullYear();
   const m = today.getMonth() - d.getMonth();
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
   return age;
 };
 
-const inputClass = (hasErr) =>
-  `w-full border rounded-lg px-3 py-2 mt-1 outline-none transition ${
-    hasErr ? "border-red-500" : "border-gray-300 focus:border-black"
-  }`;
+const formatNiceDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
 
-const App = () => {
-  const [step, setStep] = useState(1);
-  const [done, setDone] = useState(false);
-  const [errors, setErrors] = useState({});
-  const [form, setForm] = useState({
-    firstName: "",
-    lastName: "",
-    username: "",
-    email: "",
-    phone: "",
-    password: "",
-    confirmPassword: "",
-    dob: "",
-    image: null,
+const loadForm = () => {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const saveForm = (payload) => {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  } catch {}
+};
+
+const clearForm = () => {
+  try {
+    localStorage.removeItem(LS_KEY);
+  } catch {}
+};
+
+const fileToDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = reject;
+    r.readAsDataURL(file);
   });
 
-  const setVal = (name, value) => {
-    setForm((p) => ({ ...p, [name]: value }));
-   
-    setErrors((prev) => {
-      if (!prev[name]) return prev;
-      const next = { ...prev };
-      delete next[name];
-      return next;
-    });
-  };
+const pageVariants = {
+  initial: (dir) => ({
+    opacity: 0,
+    y: 18,
+    x: dir > 0 ? 18 : -18,
+    filter: "blur(2px)",
+  }),
+  animate: { opacity: 1, y: 0, x: 0, filter: "blur(0px)" },
+  exit: (dir) => ({
+    opacity: 0,
+    y: -12,
+    x: dir > 0 ? -18 : 18,
+    filter: "blur(2px)",
+  }),
+};
 
-  const validators = useMemo(
-    () => ({
-      1: [
-        () =>
-          !form.firstName.trim() ? { firstName: "Нэрээ оруулна уу" } : null,
-        () =>
-          !form.lastName.trim() ? { lastName: "Овгоо оруулна уу." } : null,
-        () =>
-          !form.username.trim()
-            ? { username: "Хэрэглэгчийн нэрээ оруулна уу" }
-            : null,
-      ],
-      2: [
-        () =>
-          !form.email.trim()
-            ? { email: "Зөв мэйл хаяг оруулна уу" }
-            : !isEmail(form.email)
-              ? { email: "Зөв мэйл хаяг оруулна уу" }
-              : null,
+const fieldVariants = {
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0 },
+};
 
-        () => {
-          const digits = onlyDigits(form.phone);
-          return digits.length !== 8
-            ? { phone: "8 оронтой дугаар оруулна уу." }
-            : null;
-        },
+const errorShake = {
+  x: [0, -6, 6, -4, 4, 0],
+  transition: { duration: 0.25 },
+};
 
-        () =>
-          !form.password
-            ? { password: "6 оронтой тоо оруулна уу" }
-            : form.password.length < 6
-              ? { password: "6 оронтой тоо оруулна уу" }
-              : null,
+const Field = ({
+  label,
+  required,
+  placeholder,
+  value,
+  onChange,
+  error,
+  type = "text",
+  inputMode,
+  autoComplete,
+}) => {
+  const base =
+    "w-full rounded-[14px] border bg-white px-4 py-4 text-lg outline-none transition";
+  const ok = "border-slate-300 focus:border-slate-400";
+  const bad = "border-red-500 focus:border-red-500";
 
-        () =>
-          !form.confirmPassword
-            ? { confirmPassword: "Нууц үгээ давтан оруулна уу" }
-            : form.password !== form.confirmPassword
-              ? { confirmPassword: "Нууц үг таарахгүй байна" }
-              : null,
-      ],
-      3: [
-        () => {
-          if (!form.dob) return { dob: "Төрсөн огноогоо оруулна уу" };
-          return getAge(form.dob) < 18
-            ? { dob: "Та 18 ба түүнээс дээш настай байх ёстой." }
-            : null;
-        },
-        () => (!form.image ? { image: "Профайл зургаа оруулна уу" } : null),
-      ],
-    }),
-    [form],
+  return (
+    <motion.div variants={fieldVariants} className="space-y-2">
+      <div className="text-lg font-semibold text-slate-800">
+        {label} {required ? <span className="text-red-500">*</span> : null}
+      </div>
+
+      <motion.input
+        type={type}
+        inputMode={inputMode}
+        autoComplete={autoComplete}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={`${base} ${error ? bad : ok}`}
+        animate={error ? errorShake : { x: 0 }}
+      />
+
+      <AnimatePresence>
+        {error ? (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            className="text-red-500 text-base"
+          >
+            {error}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </motion.div>
   );
+};
 
-  const validateStep = () => {
-    const nextErrors = (validators[step] || []).reduce((acc, rule) => {
-      const out = rule();
-      return out ? { ...acc, ...out } : acc;
-    }, {});
-    setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
+const Button = ({
+  children,
+  variant = "primary",
+  onClick,
+  disabled,
+  className = "",
+}) => {
+  const common =
+    "h-14 rounded-[14px] px-6 text-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed";
+  const primary = "bg-slate-800 text-white hover:bg-slate-900";
+  const ghost =
+    "bg-white text-slate-800 border border-slate-300 hover:bg-slate-50";
+
+  return (
+    <motion.button
+      whileTap={{ scale: 0.98 }}
+      whileHover={disabled ? {} : { y: -1 }}
+      onClick={onClick}
+      disabled={disabled}
+      className={`${common} ${variant === "primary" ? primary : ghost} ${className}`}
+      type="button"
+    >
+      {children}
+    </motion.button>
+  );
+};
+
+export default function App() {
+  const [step, setStep] = useState(1);
+  const [done, setDone] = useState(false);
+  const [data, setData] = useState(initial);
+  const [dobParts, setDobParts] = useState({ y: "", m: "", d: "" });
+  const [touched, setTouched] = useState({});
+  const [isDragging, setIsDragging] = useState(false);
+
+  const inputRef = useRef(null);
+  const prevStepRef = useRef(1);
+  const direction = step >= prevStepRef.current ? 1 : -1;
+
+  useEffect(() => {
+    const saved = loadForm();
+    if (saved && typeof saved === "object") {
+      setStep(saved.step ?? 1);
+      setDone(Boolean(saved.done));
+      setData({ ...initial, ...(saved.data ?? {}) });
+      const iso = saved?.data?.dob;
+      if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        const [y, m, d] = iso.split("-");
+        setDobParts({ y, m, d });
+      }
+      setTouched(saved.touched ?? {});
+      prevStepRef.current = saved.step ?? 1;
+    }
+  }, []);
+
+  useEffect(() => {
+    saveForm({ step, done, data, touched });
+  }, [step, done, data, touched]);
+
+  useEffect(() => {
+    const prevent = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
+
+  const errors = useMemo(() => {
+    const e = {};
+
+    if (step === 1) {
+      if (!data.firstName.trim()) e.firstName = "Нэрээ оруулна уу";
+      if (!data.lastName.trim()) e.lastName = "Овгоо оруулна уу.";
+      if (!data.username.trim()) e.username = "Хэрэглэгчийн нэрээ оруулна уу";
+    }
+
+    if (step === 2) {
+      if (!data.email.trim() || !isEmail(data.email))
+        e.email = "Зөв мэйл хаяг оруулна уу";
+
+      const phoneDigits = onlyDigits(data.phone);
+      if (phoneDigits.length !== 8) e.phone = "8 оронтой дугаар оруулна уу.";
+
+      const passDigits = onlyDigits(data.password);
+      if (!data.password || passDigits.length < 6)
+        e.password = "6 оронтой тоо оруулна уу";
+
+      if (!data.confirmPassword)
+        e.confirmPassword = "Нууц үгээ давтан оруулна уу";
+      if (data.confirmPassword && data.password !== data.confirmPassword)
+        e.confirmPassword = "Нууц үг таарахгүй байна";
+    }
+
+    if (step === 3) {
+      const age = yearsDiff(data.dob);
+      if (!data.dob) e.dob = "Төрсөн өбрөө оруулна уу";
+      else if (age < 18) e.dob = "Та 18 ба түүнээс дээш настай байх ёстой.";
+
+      if (!data.profileImageUrl) e.profileImage = "Профайл зургаа оруулна уу";
+    }
+
+    return e;
+  }, [data, step]);
+
+  const canContinue = useMemo(() => Object.keys(errors).length === 0, [errors]);
+
+  const markTouched = (name) => setTouched((p) => ({ ...p, [name]: true }));
+  const setField = (name, value) => setData((p) => ({ ...p, [name]: value }));
+  const showError = (name) => Boolean(touched[name] && errors[name]);
+
+  const continueNext = () => {
+    if (step === 1) ["firstName", "lastName", "username"].forEach(markTouched);
+    if (step === 2)
+      ["email", "phone", "password", "confirmPassword"].forEach(markTouched);
+    if (step === 3) ["dob", "profileImage"].forEach(markTouched);
+
+    if (!canContinue) return;
+
+    prevStepRef.current = step;
+    if (step < 3) setStep((s) => s + 1);
+    else setDone(true);
   };
 
-  const next = () => {
-    if (!validateStep()) return;
-    setStep((s) => Math.min(3, s + 1));
+  const goBack = () => {
+    prevStepRef.current = step;
+    setStep((s) => Math.max(1, s - 1));
   };
 
-  const back = () => setStep((s) => Math.max(1, s - 1));
-
-  const submit = () => {
-    if (!validateStep()) return;
-    setDone(true);
+  const handleFiles = async (files) => {
+    const file = files && files[0];
+    if (!file || !file.type?.startsWith("image/")) return;
+    const url = await fileToDataUrl(file);
+    setField("profileImageUrl", url);
+    markTouched("profileImage");
   };
 
-  const resetAll = () => {
-    setDone(false);
-    setStep(1);
-    setErrors({});
-    setForm({
-      firstName: "",
-      lastName: "",
-      username: "",
-      email: "",
-      phone: "",
-      password: "",
-      confirmPassword: "",
-      dob: "",
-      image: null,
-    });
+  const handleChangeFile = async (e) => {
+    const files = e.target.files;
+    await handleFiles(files);
+    e.target.value = "";
+  };
+
+  const clearImage = () => {
+    setField("profileImageUrl", "");
+    markTouched("profileImage");
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const files = e.dataTransfer?.files;
+    await handleFiles(files);
   };
 
   if (done) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-        <div className="bg-white w-full max-w-md p-6 rounded-xl shadow">
-          <div className="w-10 h-10">
-            <img
-              src="main.png"
-              alt=""
-              className="w-full h-full object-contain"
-            />
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 ">
+        <div className="bg-white h-70 w-140 p-6 rounded-xl shadow">
+          <div className="">
+            <img src="main.png" className="h-25"></img>
+
+            <motion.h1
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3 text-5xl font-extrabold text-slate-900 tracking-tight"
+            >
+              You're All Set!{" "}
+              <motion.span
+                animate={{ rotate: [0, 6, -6, 0], scale: [1, 1.05, 1] }}
+                transition={{
+                  duration: 1.6,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                }}
+                className="inline-block"
+              >
+                🔥
+              </motion.span>
+            </motion.h1>
+
+            <motion.p
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 }}
+              className="mt-4 text-2xl text-slate-400"
+            >
+              We've received your submission. Thank you!
+            </motion.p>
           </div>
-
-          <h1 className="text-4xl font-extrabold mt-6">You're All Set! 🔥</h1>
-          <p className="text-gray-400 text-xl mt-2">
-            We've received your submission. Thank you!
-          </p>
-
-          <button
-            type="button"
-            onClick={resetAll}
-            className="mt-8 w-full border border-gray-300 py-3 rounded-lg hover:bg-gray-50"
-          >
-            Submit again
-          </button>
         </div>
       </div>
     );
@@ -175,195 +363,272 @@ const App = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
       <div className="bg-white w-full max-w-md p-6 rounded-xl shadow">
-        <div className="w-10 h-10">
-          <img src="main.png" alt="" className="w-full h-full object-contain" />
+        <div className="mt-4">
+          <img src="main.png" className="h-25"></img>
+          <motion.h1
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-6 text-5xl font-extrabold text-slate-900 tracking-tight"
+          >
+            Join Us! 😎
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+            className="mt-4 text-2xl text-slate-400"
+          >
+            Please provide all current information accurately.
+          </motion.p>
+        </div>
+        <div className="mt-10">
+          <AnimatePresence mode="wait" custom={direction}>
+            <motion.div
+              key={step}
+              custom={direction}
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.22, ease: "easeOut" }}
+              className="space-y-8"
+            >
+              {step === 1 ? (
+                <>
+                  <Field
+                    label="First name"
+                    required
+                    placeholder="Your first name"
+                    value={data.firstName}
+                    onChange={(e) => {
+                      setField("firstName", e.target.value);
+                      markTouched("firstName");
+                    }}
+                    error={showError("firstName") ? errors.firstName : ""}
+                    autoComplete="given-name"
+                  />
+                  <Field
+                    label="Last name"
+                    required
+                    placeholder="Your last name"
+                    value={data.lastName}
+                    onChange={(e) => {
+                      setField("lastName", e.target.value);
+                      markTouched("lastName");
+                    }}
+                    error={showError("lastName") ? errors.lastName : ""}
+                    autoComplete="family-name"
+                  />
+                  <Field
+                    label="Username"
+                    required
+                    placeholder="Your username"
+                    value={data.username}
+                    onChange={(e) => {
+                      setField("username", e.target.value);
+                      markTouched("username");
+                    }}
+                    error={showError("username") ? errors.username : ""}
+                    autoComplete="username"
+                  />
+                </>
+              ) : null}
+
+              {step === 2 ? (
+                <>
+                  <Field
+                    label="Email"
+                    required
+                    placeholder="Your email"
+                    value={data.email}
+                    onChange={(e) => {
+                      setField("email", e.target.value);
+                      markTouched("email");
+                    }}
+                    error={showError("email") ? errors.email : ""}
+                    type="email"
+                    autoComplete="email"
+                  />
+                  <Field
+                    label="Phone number"
+                    required
+                    placeholder="Your phone number"
+                    value={data.phone}
+                    onChange={(e) => {
+                      setField("phone", e.target.value);
+                      markTouched("phone");
+                    }}
+                    error={showError("phone") ? errors.phone : ""}
+                    inputMode="numeric"
+                    autoComplete="tel"
+                  />
+                  <Field
+                    label="Password"
+                    required
+                    placeholder="Your password"
+                    value={data.password}
+                    onChange={(e) => {
+                      setField("password", e.target.value);
+                      markTouched("password");
+                    }}
+                    error={showError("password") ? errors.password : ""}
+                    type="password"
+                    autoComplete="new-password"
+                  />
+                  <Field
+                    label="Confirm password"
+                    required
+                    placeholder="Confirm password"
+                    value={data.confirmPassword}
+                    onChange={(e) => {
+                      setField("confirmPassword", e.target.value);
+                      markTouched("confirmPassword");
+                    }}
+                    error={
+                      showError("confirmPassword") ? errors.confirmPassword : ""
+                    }
+                    type="password"
+                    autoComplete="new-password"
+                  />
+                </>
+              ) : null}
+
+              {step === 3 ? (
+                <>
+                  <div className="space-y-2">
+                    <div className="text-lg font-semibold text-slate-800">
+                      Date of birth <span className="text-red-500">*</span>
+                    </div>
+
+                    <input
+                      type="date"
+                      value={data.dob}
+                      onChange={(e) => {
+                        setField("dob", e.target.value);
+                        markTouched("dob");
+                      }}
+                      className={`w-full rounded-[14px] border px-4 py-4 text-lg text-center bg-slate-200 outline-none ${
+                        showError("dob")
+                          ? "border-red-500"
+                          : "border-slate-300 hover:border-slate-400"
+                      }`}
+                      style={{
+                        fontSize: 16,
+                        WebkitAppearance: "none",
+                        appearance: "none",
+                      }}
+                    />
+
+                    {showError("dob") ? (
+                      <div className="text-red-500 text-base">{errors.dob}</div>
+                    ) : null}
+                  </div>
+
+                  <motion.div variants={fieldVariants} className="space-y-2">
+                    <div className="text-lg font-semibold text-slate-800">
+                      Profile image <span className="text-red-500">*</span>
+                    </div>
+
+                    <motion.div
+                      animate={
+                        showError("profileImage") ? errorShake : { x: 0 }
+                      }
+                      onClick={() => inputRef.current?.click()}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      className={`relative w-full rounded-[14px] border bg-white p-4 cursor-pointer select-none ${
+                        showError("profileImage")
+                          ? "border-red-500"
+                          : "border-slate-200"
+                      }`}
+                    >
+                      <div
+                        className={`relative rounded-[14px] border text-center overflow-hidden ${
+                          isDragging
+                            ? "border-2 border-dashed border-slate-900 bg-slate-50"
+                            : "border-slate-200 bg-slate-100"
+                        }`}
+                        style={{ height: 190 }}
+                      >
+                        {!data.profileImageUrl ? (
+                          <div className="flex h-full flex-col items-center justify-center gap-3">
+                            <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-white border border-slate-200">
+                              🖼️
+                            </div>
+                            <div className="text-xl text-slate-900">
+                              Browse or Drop Image
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <img
+                              src={data.profileImageUrl}
+                              alt="profile"
+                              className="absolute inset-0 w-full h-full object-cover object-center"
+                            />
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                clearImage();
+                              }}
+                              className="absolute top-3 right-3 w-9 h-9 rounded-full bg-slate-700/90 text-white flex items-center justify-center"
+                              aria-label="remove"
+                            >
+                              ×
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      <input
+                        ref={inputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleChangeFile}
+                        className="hidden"
+                      />
+                    </motion.div>
+
+                    <AnimatePresence>
+                      {showError("profileImage") ? (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          className="text-red-500 text-base"
+                        >
+                          {errors.profileImage}
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </motion.div>
+                </>
+              ) : null}
+            </motion.div>
+          </AnimatePresence>
         </div>
 
-        <h1 className="text-2xl font-bold mb-2">Join Us 😎</h1>
-        <p className="text-gray-500 mb-4">
-          Please provide all current information accurately.
-        </p>
+        <div className="flex gap-5">
+          {step === 1 ? (
+            <Button onClick={continueNext} className="w-full mt-7">
+              Continue 1/3 <span className="ml-2">›</span>
+            </Button>
+          ) : (
+            <div className="flex gap-4 items-center">
+              <Button variant="ghost" onClick={goBack} className="mt-7">
+                <span className="mr-2">‹</span> Back
+              </Button>
 
-        <AnimatePresence mode="wait">
-          {step === 1 && (
-            <motion.div
-              key="s1"
-              variants={stepVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              className="space-y-3"
-            >
-              <Input
-                label="First name"
-                value={form.firstName}
-                onChange={(v) => setVal("firstName", v)}
-                error={errors.firstName}
-              />
-              <Input
-                label="Last name"
-                value={form.lastName}
-                onChange={(v) => setVal("lastName", v)}
-                error={errors.lastName}
-              />
-              <Input
-                label="Username"
-                value={form.username}
-                onChange={(v) => setVal("username", v)}
-                error={errors.username}
-              />
-              <Button onClick={next}>Continue 1/3</Button>
-            </motion.div>
+              <Button onClick={continueNext} className="mt-7 w-67">
+                Continue {step}/3 <span className="ml-2">›</span>
+              </Button>
+            </div>
           )}
-
-          {step === 2 && (
-            <motion.div
-              key="s2"
-              variants={stepVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              className="space-y-3"
-            >
-              <Input
-                label="Email"
-                value={form.email}
-                onChange={(v) => setVal("email", v)}
-                error={errors.email}
-                placeholder="Your email"
-              />
-              <Input
-                label="Phone number"
-                value={form.phone}
-                onChange={(v) => setVal("phone", v)}
-                error={errors.phone}
-                placeholder="Your phone number"
-                inputMode="numeric"
-              />
-              <Input
-                label="Password"
-                type="password"
-                value={form.password}
-                onChange={(v) => setVal("password", v)}
-                error={errors.password}
-                placeholder="Your password"
-              />
-              <Input
-                label="Confirm password"
-                type="password"
-                value={form.confirmPassword}
-                onChange={(v) => setVal("confirmPassword", v)}
-                error={errors.confirmPassword}
-                placeholder="Confirm password"
-              />
-
-              <div className="flex gap-2">
-                <SecondaryButton onClick={back}>Back</SecondaryButton>
-                <Button onClick={next}>Continue 2/3</Button>
-              </div>
-            </motion.div>
-          )}
-
-          {step === 3 && (
-            <motion.div
-              key="s3"
-              variants={stepVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              className="space-y-3"
-            >
-              <Input
-                label="Date of birth"
-                type="date"
-                value={form.dob}
-                onChange={(v) => setVal("dob", v)}
-                error={errors.dob}
-              />
-
-              <div
-                className={`border-2 border-dashed rounded-lg p-6 text-center ${
-                  errors.image ? "border-red-500" : "border-gray-300"
-                }`}
-              >
-                <input
-                  id="img"
-                  type="file"
-                  className="hidden"
-                  accept="image/*"
-                  onChange={(e) => setVal("image", e.target.files?.[0] || null)}
-                />
-                <label htmlFor="img" className="cursor-pointer text-gray-500">
-                  Browse or Drop Image
-                </label>
-
-                {form.image ? (
-                  <p className="text-gray-600 text-sm mt-2">
-                    Selected:{" "}
-                    <span className="font-medium">{form.image.name}</span>
-                  </p>
-                ) : null}
-              </div>
-
-              {errors.image && (
-                <p className="text-red-500 text-sm">{errors.image}</p>
-              )}
-
-              <div className="flex gap-2">
-                <SecondaryButton onClick={back}>Back</SecondaryButton>
-                <Button onClick={submit}>Continue 3/3</Button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        </div>
       </div>
     </div>
   );
-};
-
-const Input = ({
-  label,
-  value,
-  onChange,
-  error,
-  type = "text",
-  placeholder,
-  inputMode,
-}) => (
-  <div>
-    <label className="text-sm font-medium">
-      {label} <span className="text-red-500">*</span>
-    </label>
-    <input
-      type={type}
-      inputMode={inputMode}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={inputClass(!!error)}
-      placeholder={placeholder || `Your ${label.toLowerCase()}`}
-    />
-    {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
-  </div>
-);
-
-const Button = ({ children, ...props }) => (
-  <button
-    {...props}
-    type="button"
-    className="w-full bg-black text-white py-3 rounded-lg hover:opacity-90"
-  >
-    {children}
-  </button>
-);
-
-const SecondaryButton = ({ children, ...props }) => (
-  <button
-    {...props}
-    type="button"
-    className="w-full border border-gray-300 py-3 rounded-lg hover:bg-gray-50"
-  >
-    {children}
-  </button>
-);
-
-export default App;
+}
