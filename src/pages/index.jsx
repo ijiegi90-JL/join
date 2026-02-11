@@ -323,7 +323,7 @@ export default function App() {
   if (done) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 ">
-        <div className="bg-white h-70 w-140 p-6 rounded-xl shadow">
+        <div className="bg-white h-90 w-140 p-6 rounded-xl shadow">
           <div className="">
             <img src="main.png" className="h-25"></img>
 
@@ -354,6 +354,21 @@ export default function App() {
             >
               We've received your submission. Thank you!
             </motion.p>
+            <div className="mt-10">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setDone(false);
+                  setStep(1);
+                  prevStepRef.current = 1;
+                  setData(initial);
+                  setTouched({});
+                  clearForm();
+                }}
+              >
+                Sumbit Again
+              </Button>
+            </div>
           </div>
         </div>
       </div>
